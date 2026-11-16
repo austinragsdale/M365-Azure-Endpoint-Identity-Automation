@@ -72,6 +72,4 @@ Bulk-imports policies from JSON into the same or a different tenant, report-only
 
 ---
 
-Coming next: drift detection against a saved baseline, an HTML policy report, and a break-glass exclusion check.
-
 [Back to the toolkit](../README.md)
