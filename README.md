@@ -4,50 +4,45 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207-5391FE?logo=powershell&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
-PowerShell tools for administering Microsoft 365: Entra ID, Intune, Autopilot, Exchange Online, on-prem Active Directory, and migrations to cloud-only Entra ID.
+PowerShell scripts I've written for Microsoft 365 work: Entra ID, Intune, Autopilot, Exchange Online, on-prem AD, and a lot of AD-to-Entra ID migrations.
 
-Every script was built for and used in real tenant work, then generalized to run in any tenant. Client-specific values are parameters, never hardcoded.
+Every one of these started as a script for a real tenant. I've stripped out the client-specific stuff (names, domains, IDs) and turned it into parameters, so they should run anywhere.
 
-## What's inside
+| Folder | What's in it |
+|---|---|
+| [Migration](Migration/) | Moving devices and user profiles from on-prem AD to cloud-only Entra ID (14 scripts) |
+| [Intune](Intune/) | Device inventory, compliance, primary users, policy backup, Autopilot, on-device fixes (14) |
+| [Entra ID](Entra-ID/) | Groups, licensing, matching names to UPNs, password expiry (4) |
+| [Conditional Access](Conditional-Access/) | Back up CA policies and import them into the same or another tenant (2) |
+| [Security](Security/) | A ScreenConnect threat hunt and FortiEDR rollout checks (4) |
+| [Active Directory](Active-Directory/) | GPO inventory, password audit, moving computers out of sync scope (3) |
+| [Exchange Online](Exchange-Online/) | Cleaning out an oversized mailbox (1) |
+| [Automation Runbooks](Automation-Runbooks/) | An Azure Automation job that runs on a managed identity (1) |
+| [Azure](Azure/) | |
 
-| Area | What it covers | Scripts |
-|---|---|---|
-| [Migration](Migration/) | AD to cloud-only Entra ID: device planning and user profile migration | 14 |
-| [Entra ID](Entra-ID/) | Groups, licensing, name-to-UPN matching, password expiry | 4 |
-| [Intune](Intune/) | Inventory, compliance policy backup and import, primary users, device fixes, Autopilot | 14 |
-| [Exchange Online](Exchange-Online/) | Bulk mailbox cleanup | 1 |
-| [Active Directory](Active-Directory/) | GPO inventory, password audit, OU moves | 3 |
-| [Security](Security/) | Threat hunting, EDR rollout readiness | 4 |
-| [Automation Runbooks](Automation-Runbooks/) | Scheduled Azure Automation jobs with managed identity | 1 |
-| [Conditional Access](Conditional-Access/) | Policy backup, restore, and bulk import between tenants | 2 |
-| [Azure](Azure/) | | |
+## Before you run anything
 
-Each folder's README lists its scripts with a plain-English description, whether the script changes anything, and the permissions it needs.
+Read the script first. Anything that changes a tenant or a device has a `-WhatIf` or `-DryRun` switch, and the deletes ask before they delete. Use them.
 
-## Safety first
+For the Graph scripts:
 
-- Every script is labeled **READ-ONLY**, **LOCAL FILES**, or **WRITES**.
-- Scripts that change things support `-WhatIf` or `-DryRun`. Run that first.
-- Destructive actions (deletes, moves) confirm before acting.
+```powershell
+Install-Module Microsoft.Graph -Scope CurrentUser
+Connect-MgGraph -Scopes "User.Read.All"        # use the scopes the script asks for, nothing more
+Get-MgContext                                   # make sure you're in the right tenant
+Get-Help .\Some-Script.ps1 -Full
+```
 
-## Getting started
+There's a bit more in [docs/](docs/): [getting started](docs/Getting-Started.md), [which permissions each script needs](docs/Permissions.md), and [running scripts unattended](docs/App-Registration.md).
 
-1. Install the Microsoft Graph PowerShell SDK: `Install-Module Microsoft.Graph -Scope CurrentUser`
-2. Connect with only the permissions the script lists: `Connect-MgGraph -Scopes "User.Read.All"`
-3. Read the script's help: `Get-Help .\Script-Name.ps1 -Full`
+## Other people's tools I use
 
-More detail: [Getting started](docs/Getting-Started.md) · [Permissions by script](docs/Permissions.md) · [Unattended authentication](docs/App-Registration.md)
+Not mine, so they're linked instead of copied in here:
 
-## Recommended community tools
+- [Export Microsoft Entra ID users to CSV](https://www.alitajran.com/export-microsoft-entra-id-users-to-csv-powershell/) by Ali Tajran. Every user with manager, MFA methods and last sign-in.
+- [Get-WindowsAutopilotInfo](https://www.powershellgallery.com/packages/Get-WindowsAutopilotInfo) from Microsoft. Grabs Autopilot hardware hashes.
+- [ForensiT User Profile Wizard](https://www.forensit.com/domain-migration.html). The profile migration tool my User Profile Migration scripts are built around.
 
-Scripts by other authors that are worth using. They are linked here, not copied into this repo.
+---
 
-| Tool | Author | What it does |
-|---|---|---|
-| [Export Microsoft Entra ID users to CSV](https://www.alitajran.com/export-microsoft-entra-id-users-to-csv-powershell/) | Ali Tajran | Exports every Entra ID user with manager, MFA methods, and last sign-in |
-| [Get-WindowsAutopilotInfo](https://www.powershellgallery.com/packages/Get-WindowsAutopilotInfo) | Microsoft | Collects Autopilot hardware hashes |
-| [ForensiT User Profile Wizard](https://www.forensit.com/domain-migration.html) | ForensiT | The profile migration tool the User Profile Migration scripts drive |
-
-## About
-
-Built by Austin Ragsdale, Endpoint and Identity Engineer (Intune, Entra ID, Microsoft 365). Licensed under [MIT](LICENSE).
+Austin Ragsdale. I work on Intune, Entra ID and Microsoft 365. MIT licensed, see [LICENSE](LICENSE).

@@ -1,43 +1,28 @@
 # Exchange Online
 
-Mailbox administration through Microsoft Graph.
-
-| Script | What it does | Changes anything? |
-|---|---|---|
-| [Remove-OldMailboxMessages](#remove-oldmailboxmessages) | Bulk deletes Inbox messages older than a cutoff date from an oversized mailbox. | WRITES, deletes (`-DryRun`) |
-
----
-
 ## Remove-OldMailboxMessages
 
-**WRITES, deletes (`-DryRun`)** · [View script](Remove-OldMailboxMessages.ps1)
+[Remove-OldMailboxMessages.ps1](Remove-OldMailboxMessages.ps1)
 
-Bulk deletes Inbox messages older than a cutoff date from an oversized mailbox. Handles throttling, can be stopped and resumed, and never logs message content. Deleted items stay recoverable.
+For a mailbox that's gotten too big to clean up in Outlook. It deletes everything in the Inbox older than a date you pick, in batches of 20, and backs off when Microsoft throttles it.
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+```powershell
+# count what would go, delete nothing
+.\Remove-OldMailboxMessages.ps1 -Mailbox shared@contoso.com -CutoffUtc '2026-06-22T05:00:00Z' -DryRun
 
-**Purpose:** Bulk deletes old messages from one mailbox's Inbox (everything received before a cutoff date) when the mailbox has grown too large to clean up normally.
+# do it (asks first)
+.\Remove-OldMailboxMessages.ps1 -Mailbox shared@contoso.com -CutoffUtc '2026-06-22T05:00:00Z'
+```
 
-**How it works:**
-1. Connects to Graph with delegated access to the mailbox.
-2. Counts every Inbox message received before the cutoff and shows the oldest and newest dates in scope. In `-DryRun` mode it stops here.
-3. In delete mode, asks for confirmation, then fetches a page of messages and deletes them in Graph batch requests of 20, waiting and retrying when Microsoft throttles the requests.
-4. Shows live progress and an estimated time remaining.
-5. Never writes message subjects or bodies to the screen or the log, only counts, dates, and the IDs of failures. This keeps sensitive mailbox content out of logs.
-6. Can be stopped with Ctrl+C and run again. It picks up where it left off, because each pass asks the server what is left.
+The dry run shows how many messages are in scope and the oldest and newest dates, so you can sanity check the cutoff before anything gets deleted. For around 70,000 messages, plan on one to three hours depending on throttling.
 
-Deleted messages go to Recoverable Items and can be restored during the mailbox's retention period.
+If you stop it partway (Ctrl+C is fine), just run it again. It asks the server what's left each time, so it picks up where it stopped.
 
-**Inputs:** `-Mailbox` and `-CutoffUtc` (required), `-DryRun`, `-PageSize` (default 500).
+It never writes subjects or message bodies to the screen or the log, only counts, dates and the IDs of anything that failed. That matters if the mailbox has anything sensitive in it.
 
-**Outputs:** Log file and console progress.
+Deleted mail goes to Recoverable Items, so you can still get it back during the retention period.
 
-**Requirements:** PowerShell 7. Module: Microsoft.Graph.Authentication. Delegated permission: Mail.ReadWrite.Shared. The signed-in admin needs Full Access to the mailbox (allow 30 to 60 minutes after granting it).
-
-**Changes anything?** WRITES. Deletes messages (soft delete). Run with `-DryRun` first.
-
-</details>
+**Needs:** PowerShell 7, the Microsoft.Graph.Authentication module, and the delegated Mail.ReadWrite.Shared permission. Your admin account also needs Full Access to the mailbox. Give that 30 to 60 minutes to kick in after you grant it, or you'll get access denied errors.
 
 ---
 

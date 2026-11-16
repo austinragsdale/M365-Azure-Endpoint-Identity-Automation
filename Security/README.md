@@ -1,57 +1,40 @@
 # Security
 
-Threat hunting and security tool rollouts, built to run across a fleet through an RMM tool.
+Scripts meant to run across a whole fleet through an RMM tool, as SYSTEM.
 
-| Script | What it does | Changes anything? |
-|---|---|---|
-| [Find-UnauthorizedScreenConnect](#find-unauthorizedscreenconnect) | Fleet-wide threat hunt for rogue ScreenConnect remote-access clients from a 2026 attack campaign. | READ-ONLY |
-
-## Subfolders
-
-- [FortiEDR Readiness](FortiEDR-Readiness/): pre-rollout checks for the FortiEDR agent
-
----
+The [FortiEDR-Readiness](FortiEDR-Readiness/) folder has the checks I ran before moving machines to FortiEDR.
 
 ## Find-UnauthorizedScreenConnect
 
-**READ-ONLY** · [View script](Find-UnauthorizedScreenConnect.ps1)
+[Find-UnauthorizedScreenConnect.ps1](Find-UnauthorizedScreenConnect.ps1)
 
-Fleet-wide threat hunt for rogue ScreenConnect remote-access clients from a 2026 attack campaign. Runs 14 checks (services, tasks, files, network, Defender exclusions, and more) and rates the device CLEAN, REVIEW, SUSPICIOUS, or COMPROMISED.
+In 2026 there was a campaign where attackers installed their own ScreenConnect clients on MSP-managed machines, right next to the MSP's legitimate one. This is the hunt I wrote for it. It doesn't remove or stop anything. It just looks and reports.
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+You tell it which ScreenConnect instances are yours, and anything else gets flagged:
 
-**Purpose:** A read-only threat hunt for a 2026 attack campaign in which attackers installed rogue ScreenConnect remote-access clients on MSP-managed machines. Built to run across a whole fleet through an RMM tool.
+```powershell
+.\Find-UnauthorizedScreenConnect.ps1 -AllowedThumbprints '0123456789abcdef' -AllowedRelayHosts 'instance-xxxxxx-relay.screenconnect.com'
+```
 
-**How it works:** Runs more than a dozen independent checks and reports each finding with a severity:
-1. **Services:** every ScreenConnect-style client service, identified by its program file rather than its display name, compared against your allowed instance IDs and relay hosts. Also detects your own client being stopped or set to manual, which this campaign does.
-2. **Installed programs** (both 32-bit and 64-bit registry views).
-3. **Folders** used by the campaign, disguised client folders, and foreign client install folders.
-4. **Scheduled tasks**, plus event 4698 (task created) to catch tasks that were later deleted, if auditing is on.
-5. **Running processes** whose command line contains campaign strings.
-6. **Run keys** for the machine and every loaded user profile.
-7. **Files** in Windows\Temp, Public, ScreenConnect temp, and every user's Temp folder (skippable with `-SkipUserTempScan`).
-8. **netsh portproxy** rules (the campaign forwarded a local port to an attacker IP).
-9. **Hosts file** changes.
-10. **Live network:** DNS cache and current connections to known bad infrastructure.
-11. **Defender exclusions**, read from the registry if a third-party antivirus is primary. The campaign adds exclusions for msiexec.exe and powershell.exe.
-12. **Software restriction and AppLocker rules** aimed at ScreenConnect temp folders.
-13. **MSI install history** since the campaign started.
-14. **Technician client version** on technician workstations, since newer versions block the attack path back to the technician.
+Both parameters are required. If either is missing it stops with `RESULT: ERROR` instead of reporting every client as rogue.
 
-It restarts itself in 64-bit PowerShell if launched as 32-bit. Hash and filename matches are treated as weak signals because the attacker rebuilds files for each victim. The strongest check is "any ScreenConnect client that is not yours".
+The first line of output is the verdict, `RESULT: CLEAN`, `REVIEW`, `SUSPICIOUS` or `COMPROMISED`, followed by one line per finding. That makes it easy to sort a few hundred results in the RMM.
 
-**Inputs:** `-AllowedThumbprints` and `-AllowedRelayHosts` (required: your own ScreenConnect instance IDs and relay host; the scan stops with `RESULT: ERROR` if either is missing), `-SkipUserTempScan`, `-AlwaysExitZero`.
+What it checks:
 
-**Outputs:** First line is `RESULT: CLEAN | REVIEW | SUSPICIOUS | COMPROMISED`, then one line per finding. Exit codes: 0 clean or info only, 1 medium or high findings, 2 critical, 3 script error. `-AlwaysExitZero` keeps RMM task results green so later steps still run.
+- ScreenConnect services, identified by the program file and not the display name (the rogue ones use convincing names). Also flags your own client being stopped or set to manual, which this campaign did.
+- Installed programs, install folders, scheduled tasks (including event 4698 for tasks that were deleted afterwards), running processes and Run keys
+- Temp folders, netsh portproxy rules, the hosts file, DNS cache and live connections to known bad infrastructure
+- Defender exclusions for msiexec.exe and powershell.exe, which the attackers added
+- AppLocker and software restriction rules aimed at ScreenConnect's temp folders, and MSI install history since the campaign started
 
-**Requirements:** Windows PowerShell 5.1, SYSTEM context, run through an RMM tool. **Do not run it through ScreenConnect's own Run Command.**
+Hash and filename matches only count as weak signals, because the attackers rebuilt their files for each victim. The check that really matters is "is there a ScreenConnect client here that isn't ours?"
 
-**Changes anything?** READ-ONLY. Nothing is removed, stopped, or quarantined.
+Exit codes are 0 (clean), 1 (medium/high findings), 2 (critical) and 3 (script error). Add `-AlwaysExitZero` if a non-zero exit would stop the rest of your RMM workflow. `-SkipUserTempScan` speeds it up on machines with a lot of profiles.
 
-**Credit:** Indicators from public reporting by Huntress, ConnectWise, Sophos, and Blackpoint.
+**Don't run it through ScreenConnect's own Run Command.** Use your RMM. It needs Windows PowerShell 5.1 as SYSTEM, and relaunches itself as 64-bit if needed.
 
-</details>
+Indicators came from public write-ups by Huntress, ConnectWise, Sophos and Blackpoint.
 
 ---
 
