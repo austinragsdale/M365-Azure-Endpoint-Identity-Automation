@@ -11,6 +11,8 @@ Reports and bulk actions run from an admin workstation through Microsoft Graph.
 | [Set-IntunePrimaryUserAndCategory](#set-intuneprimaryuserandcategory) | Bulk sets each device's primary user and device category from a spreadsheet. | WRITES (`-DryRun`) |
 | [Remove-DevicesFromIntuneAndEntra](#remove-devicesfromintuneandentra) | Deletes retired devices from both Intune and Entra ID, confirming each one. | WRITES, deletes (`-WhatIf`) |
 | [Export-MacOSUpdateProfiles](#export-macosupdateprofiles) | Exports a Settings Catalog profile and a custom macOS update profile to JSON, decoding the custom profile's payload, so conflicting settings can be compared. | READ-ONLY |
+| [Export-CompliancePolicies](#export-compliancepolicies) | Backs up every device compliance policy (all platforms) with its actions for noncompliance and its assignments by group name. | READ-ONLY |
+| [Import-CompliancePolicies](#import-compliancepolicies) | Bulk-imports compliance policies from JSON into the same or a different tenant, optionally rebuilding assignments by group name, never overwriting. | WRITES (dry run unless `-Apply`) |
 
 ---
 
@@ -221,6 +223,66 @@ Exports a Settings Catalog profile and a custom macOS update profile to JSON, de
 **Requirements:** Module: Microsoft.Graph.Authentication. Graph permission: DeviceManagementConfiguration.Read.All. Uses the Graph `/beta` endpoint.
 
 **Changes anything?** READ-ONLY.
+
+</details>
+
+---
+
+## Export-CompliancePolicies
+
+**READ-ONLY** · [View script](Export-CompliancePolicies.ps1)
+
+Backs up every device compliance policy (all platforms) with its actions for noncompliance and its assignments by group name.
+
+<details>
+<summary><b>Full details: how it works, inputs, requirements</b></summary>
+
+**Purpose:** A restorable backup of every Intune compliance policy (Windows, macOS, iOS/iPadOS, Android, Linux). The output is the input for Import-CompliancePolicies.
+
+**How it works:**
+1. Checks for a Graph connection.
+2. Pulls every compliance policy with its scheduled actions (the actions for noncompliance, which Graph requires when a policy is created) and its assignments.
+3. Removes read-only fields (id, dates, version, scope tags, `@odata.context`) and null values, and writes one import-ready JSON file per policy.
+4. Looks up the name of every assigned group and writes `assignments.csv`, so assignments can be rebuilt in a tenant where the group IDs are different.
+
+**Inputs:** `-OutputPath` (default: `Compliance-Backup-<date-time>` in the current folder).
+
+**Outputs:** A backup folder with `Policies\` and `assignments.csv`.
+
+**Requirements:** Module: Microsoft.Graph.Authentication. Graph permissions: DeviceManagementConfiguration.Read.All, Group.Read.All. Uses the Graph `/beta` endpoint.
+
+**Changes anything?** READ-ONLY.
+
+</details>
+
+---
+
+## Import-CompliancePolicies
+
+**WRITES (dry run unless `-Apply`)** · [View script](Import-CompliancePolicies.ps1)
+
+Bulk-imports compliance policies from JSON into the same or a different tenant, optionally rebuilding assignments by group name, never overwriting.
+
+<details>
+<summary><b>Full details: how it works, inputs, requirements</b></summary>
+
+**Purpose:** Restore compliance policies from a backup, or build a new tenant's compliance baseline in one run.
+
+**How it works:**
+1. Without `-Apply` it is a dry run that reports what would be created. With `-Apply` you type IMPORT to confirm (or pass `-Force`).
+2. Skips any policy whose name already exists.
+3. Adds the Intune default action (mark noncompliant immediately) to any file that has none, because Graph refuses a compliance policy without one.
+4. Removes notification message templates that do not exist in the target tenant, keeping the action itself.
+5. Creates each policy unassigned, or with `-Assign`, assigns it to the same groups (matched by name from `assignments.csv`), All Users or All Devices it had in the source tenant. Missing groups are reported, not created.
+6. Writes a results CSV.
+
+**Inputs:** `-Path` (backup folder or a folder of compliance policy JSON files), `-Apply`, `-Assign`, `-Force`.
+
+**Outputs:** Console results by policy and `import-results-<date-time>.csv` in the import folder.
+
+**Requirements:** Module: Microsoft.Graph.Authentication. Graph permissions: DeviceManagementConfiguration.ReadWrite.All, Group.Read.All. Role: Intune Administrator. Uses the Graph `/beta` endpoint.
+
+**Changes anything?** WRITES: creates compliance policies and, with `-Assign`, their assignments. Never modifies or deletes existing policies.
 
 </details>
 
