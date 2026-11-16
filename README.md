@@ -20,7 +20,7 @@ Every script was built for and used in real tenant work, then generalized to run
 | [Security](Security/) | Threat hunting, EDR rollout readiness | 4 |
 | [Automation Runbooks](Automation-Runbooks/) | Scheduled Azure Automation jobs with managed identity | 1 |
 | [Conditional Access](Conditional-Access/) | Policy backup, restore, and bulk import between tenants | 2 |
-| [Azure](Azure/) | Coming next: RBAC report, unused resources, tag compliance | - |
+| [Azure](Azure/) | | |
 
 Each folder's README lists its scripts with a plain-English description, whether the script changes anything, and the permissions it needs.
 
