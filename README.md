@@ -14,12 +14,12 @@ Every script was built for and used in real tenant work, then generalized to run
 |---|---|---|
 | [Migration](Migration/) | AD to cloud-only Entra ID: device planning and user profile migration | 14 |
 | [Entra ID](Entra-ID/) | Groups, licensing, name-to-UPN matching, password expiry | 4 |
-| [Intune](Intune/) | Inventory, compliance, primary users, device fixes, Autopilot | 12 |
+| [Intune](Intune/) | Inventory, compliance policy backup and import, primary users, device fixes, Autopilot | 14 |
 | [Exchange Online](Exchange-Online/) | Bulk mailbox cleanup | 1 |
 | [Active Directory](Active-Directory/) | GPO inventory, password audit, OU moves | 3 |
 | [Security](Security/) | Threat hunting, EDR rollout readiness | 4 |
 | [Automation Runbooks](Automation-Runbooks/) | Scheduled Azure Automation jobs with managed identity | 1 |
-| [Conditional Access](Conditional-Access/) | Coming next: backup, drift detection, documentation | - |
+| [Conditional Access](Conditional-Access/) | Policy backup, restore, and bulk import between tenants | 2 |
 | [Azure](Azure/) | Coming next: RBAC report, unused resources, tag compliance | - |
 
 Each folder's README lists its scripts with a plain-English description, whether the script changes anything, and the permissions it needs.
