@@ -1,295 +1,135 @@
-# User Profile Migration (ForensiT toolchain)
+# User Profile Migration (ForensiT)
 
-When a device moves from on-prem AD to Entra ID, ForensiT User Profile Wizard can move each person's existing Windows profile (desktop, documents, settings) to their new Entra ID account. It needs a lookup file that maps each old AD account to the new Entra account. If an entry is wrong, that user signs in to a new, empty profile.
+When a device moves from AD to Entra ID, the user signs in with a new account and gets a brand new, empty Windows profile. [ForensiT User Profile Wizard](https://www.forensit.com/domain-migration.html) fixes that by re-assigning their existing profile (desktop, documents, settings, everything) to the new Entra account.
 
-These scripts build that lookup file, check it, repair it, and deploy the migration. Run them in order:
+The hard part isn't ForensiT. It's the lookup file that tells it which old AD account belongs to which new Entra account. If an entry is wrong, that person signs in to an empty profile on migration day and calls the help desk. These scripts build that file, check it, fix it and then deploy the migration.
+
+You need a ForensiT User Profile Wizard Corporate license. Most of the scripts default to ForensiT's `CSV-xml` deployment folder, so if you use the standard install path you can usually run them without any parameters.
+
+## The order I run them in
 
 ```
-Step 1  Export-ADUsersForMigration        (domain controller)  -> AD user export
-Step 2  Export-EntraUserMapping           (Graph)              -> Entra user export
-Step 3  New-MigrationUserLookup           (combines 1 and 2)   -> lookup file
-Step 4  Export-ForensiTAzureIdXml         (Graph)              -> ForensiTAzureID.xml
-Step 5  Set-ProfileFolderNamesToUsername  (optional)           -> profile folders named by username
-Step 6  Test-MigrationUserLookup          (validation)         -> entries that would fail
-Step 7  Repair-MigrationUserLookup        (repair)             -> fix report
-Step 8  Update-MigrationUserLookup        (apply fixes)        -> corrected lookup file
-Step 9  Start-EntraProfileMigration       (deploy via RMM)     -> profile migrated on each device
+1  Export-ADUsersForMigration        on a DC         AD users, both username formats
+2  Export-EntraUserMapping           Graph           synced Entra users + their on-prem username
+3  New-MigrationUserLookup           local           combines 1 and 2 into the lookup file
+4  Export-ForensiTAzureIdXml         Graph           fresh ForensiTAzureID.xml
+5  Set-ProfileFolderNamesToUsername  local          optional: folders named jsmith, not "John Smith"
+6  Test-MigrationUserLookup          local           anything that will fail?
+7  Repair-MigrationUserLookup        local           work out fixes for the failures
+8  Update-MigrationUserLookup        local           apply the fixes you approved
+9  Start-EntraProfileMigration       RMM, on device  run the migration
 ```
 
-Requires a ForensiT User Profile Wizard Corporate license.
+Do step 2 **before** you turn off Entra Connect sync. Once sync is off, the link between the AD and Entra accounts is gone.
 
-| Script | What it does | Changes anything? |
-|---|---|---|
-| [Export-ADUsersForMigration](#export-adusersformigration) | Exports every enabled AD user with both username formats (jsmith and john.smith) and flags users whose two formats differ, since they need two lookup entries. | LOCAL FILES |
-| [Export-EntraUserMapping](#export-entrausermapping) | Exports synced Entra ID users with the on-prem username Entra Connect stored on them, giving an exact old-to-new account link without guessing from names. | READ-ONLY |
-| [New-MigrationUserLookup](#new-migrationuserlookup) | Combines Steps 1 and 2 into the final lookup file, with both username formats for every user, and reports AD users who will not migrate because they are not synced. | LOCAL FILES |
-| [Export-ForensiTAzureIdXml](#export-forensitazureidxml) | Rebuilds ForensiT's Azure ID file directly from Microsoft Graph, backing up the old one first. | LOCAL FILES |
-| [Set-ProfileFolderNamesToUsername](#set-profilefoldernamestousername) | Makes migrated profile folders use the username (jsmith) instead of the display name (John Smith). | LOCAL FILES (`-WhatIf`) |
-| [Test-MigrationUserLookup](#test-migrationuserlookup) | Checks every lookup entry against the Azure ID file and lists any that would fail on migration day. | READ-ONLY |
-| [Repair-MigrationUserLookup](#repair-migrationuserlookup) | Works out the correct account for entries that failed Step 6 and writes a fix report for you to review. | LOCAL FILES |
-| [Update-MigrationUserLookup](#update-migrationuserlookup) | Applies the reviewed fix report to the lookup file. | LOCAL FILES |
-| [Start-EntraProfileMigration](#start-entraprofilemigration) | Deployed through RMM. | WRITES (device) |
+## 1. Export-ADUsersForMigration
 
----
+[Export-ADUsersForMigration.ps1](Export-ADUsersForMigration.ps1). Run on a domain controller or anything with RSAT.
 
-## Export-ADUsersForMigration
+Exports every enabled AD user with their sAMAccountName, UPN and display name. The thing to watch is users whose two usernames don't match, like `jsmith` vs `john.smith`. Their profile folder could be named after either one, so they need two entries in the lookup file. The script counts them and shows a few examples.
 
-**LOCAL FILES** · [View script](Export-ADUsersForMigration.ps1)
+```powershell
+.\Export-ADUsersForMigration.ps1 -OutputPath C:\Temp\OnPrem-AD-Users.csv
+```
 
-**Step 1.** Exports every enabled AD user with both username formats (jsmith and john.smith) and flags users whose two formats differ, since they need two lookup entries.
+Copy the CSV to wherever you're running the rest.
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+## 2. Export-EntraUserMapping
 
-**Purpose:** Step 1. Exports every enabled AD user with both their pre-Windows 2000 username (sAMAccountName) and their UPN.
+[Export-EntraUserMapping.ps1](Export-EntraUserMapping.ps1)
 
-**How it works:**
-1. Loads the ActiveDirectory module and shows the domain's DNS and NetBIOS names.
-2. Exports all enabled users with sAMAccountName, UPN, the part of the UPN before the @, and display name.
-3. Flags users whose sAMAccountName differs from their UPN username (for example `jsmith` versus `john.smith`). Their profile folder could be named after either one, so both need a lookup entry.
-4. Saves the CSV and prints the number of mismatches with examples.
+Pulls every synced user from Entra ID along with the on-prem username Entra Connect stamped on them (`onPremisesSamAccountName`). That gives you an exact old-to-new match with no guessing from display names, which is why it has to run while sync is still on.
 
-**Inputs:** `-OutputPath`.
+```powershell
+.\Export-EntraUserMapping.ps1
+```
 
-**Outputs:** AD user CSV. Copy it to your workstation for the next step.
+Writes a full mapping report and a lookup CSV in ForensiT's `onprem,azure` format, with a second entry for anyone whose UPN username is different.
 
-**Requirements:** ActiveDirectory module. Run on a domain controller or a computer with RSAT.
+## 3. New-MigrationUserLookup
 
-**Changes anything?** LOCAL FILES.
+[New-MigrationUserLookup.ps1](New-MigrationUserLookup.ps1)
 
-</details>
+Combines the two exports into the final lookup file, with both username formats for every matched user. It also gives you a list of AD users who *aren't* synced. They won't migrate, and it's better to find that out now. If either export is missing, it tells you which script to run.
 
----
+```powershell
+.\New-MigrationUserLookup.ps1 -Folder C:\Temp\Migration
+```
 
-## Export-EntraUserMapping
+## 4. Export-ForensiTAzureIdXml
 
-**READ-ONLY** · [View script](Export-EntraUserMapping.ps1)
+[Export-ForensiTAzureIdXml.ps1](Export-ForensiTAzureIdXml.ps1)
 
-**Step 2.** Exports synced Entra ID users with the on-prem username Entra Connect stored on them, giving an exact old-to-new account link without guessing from names. Run it before turning off sync.
+ForensiT uses ForensiTAzureID.xml to find each user's Entra object ID. An out-of-date copy is one of the most common reasons a migration fails. This rebuilds it straight from Graph (tenant ID, verified domains and every user) and backs up the old one first.
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+```powershell
+.\Export-ForensiTAzureIdXml.ps1
+```
 
-**Purpose:** Step 2. Exports synced Entra ID users with the on-prem username that Entra Connect stored on them. This links old and new accounts exactly, without guessing from names.
+## 5. Set-ProfileFolderNamesToUsername (optional)
 
-**How it works:**
-1. Installs Microsoft.Graph.Users if missing and connects with User.Read.All.
-2. Pulls every user that has an `onPremisesSamAccountName`, meaning they are synced from AD.
-3. Writes a full mapping report.
-4. Builds a lookup file in `onprem,azure` format: one entry for the sAMAccountName, plus a second entry for the UPN username if it differs. Duplicates are removed.
+[Set-ProfileFolderNamesToUsername.ps1](Set-ProfileFolderNamesToUsername.ps1)
 
-**Inputs:** `-OutputFolder`.
+By default, migrated profile folders get named after the display name, so you end up with `C:\Users\John Smith`. This changes the names in the XML to the UPN username so you get `C:\Users\jsmith` instead, and strips out characters Windows doesn't allow in folder names.
 
-**Outputs:** Full mapping report CSV and a lookup CSV.
+```powershell
+.\Set-ProfileFolderNamesToUsername.ps1 -WhatIf
+```
 
-**Requirements:** Module: Microsoft.Graph.Users. Graph permission: User.Read.All. **Run this before Entra Connect sync is turned off**, while users are still synced.
+It backs up the XML before changing it.
 
-**Changes anything?** READ-ONLY in the tenant. Writes local files.
+## 6. Test-MigrationUserLookup
 
-</details>
+[Test-MigrationUserLookup.ps1](Test-MigrationUserLookup.ps1)
 
----
+Checks every Entra UPN in the lookup file against the XML. Anything missing from the XML will fail on migration day. You either get "ALL CSV ENTRIES ARE VALID" or a red list of problems.
 
-## New-MigrationUserLookup
+```powershell
+.\Test-MigrationUserLookup.ps1
+```
 
-**LOCAL FILES** · [View script](New-MigrationUserLookup.ps1)
+Run it before every wave, not just once. People get renamed and hired in the middle of a project.
 
-**Step 3.** Combines Steps 1 and 2 into the final lookup file, with both username formats for every user, and reports AD users who will not migrate because they are not synced.
+## 7. Repair-MigrationUserLookup
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+[Repair-MigrationUserLookup.ps1](Repair-MigrationUserLookup.ps1)
 
-**Purpose:** Step 3. Combines the AD export (step 1) and the Entra export (step 2) into the final lookup file.
+For the entries that failed step 6, it uses the entries that *did* pass to work out the right account. For example, if `jsmith` failed but `john.smith` is valid, it maps `jsmith` to that account too. It keeps both entries per user and writes a corrected file plus a fix report. It never overwrites the input.
 
-**How it works:**
-1. Checks that both export files exist, and says which script to run if one is missing.
-2. Builds a lookup of Entra users by their on-prem username.
-3. Sorts every AD user as matched or AD-only (not synced, so they will not migrate).
-4. Counts matched users whose two username formats differ, since they need two lookup entries.
-5. Saves a matched report and an AD-only report.
-6. Builds the final lookup file with both username formats for every matched user.
+```powershell
+.\Repair-MigrationUserLookup.ps1
+```
 
-**Inputs:** `-Folder` containing both exports.
+**It assumes short usernames are first initial + last name.** If the client uses a different pattern, don't trust the results without reading the fix report.
 
-**Outputs:** Comparison reports and the final lookup CSV.
+## 8. Update-MigrationUserLookup
 
-**Requirements:** PowerShell only.
+[Update-MigrationUserLookup.ps1](Update-MigrationUserLookup.ps1)
 
-**Changes anything?** LOCAL FILES.
+Read the fix report from step 7 and edit it if you need to. Then this applies it to the lookup file and saves a new, corrected copy.
 
-</details>
+```powershell
+.\Update-MigrationUserLookup.ps1 -CsvPath .\UserLookup-FINAL.csv -FixesPath .\Fixes-Report-v2.csv -OutputPath .\UserLookup-CORRECTED.csv
+```
 
----
+## 9. Start-EntraProfileMigration
 
-## Export-ForensiTAzureIdXml
+[Start-EntraProfileMigration.ps1](Start-EntraProfileMigration.ps1). Deployed through RMM, runs as SYSTEM.
 
-**LOCAL FILES** · [View script](Export-ForensiTAzureIdXml.ps1)
+Downloads your ForensiT migration package to the device and runs it. ForensiT moves the profile and reboots.
 
-**Step 4.** Rebuilds ForensiT's Azure ID file directly from Microsoft Graph, backing up the old one first. An out-of-date file is a common cause of failed migrations.
+```powershell
+.\Start-EntraProfileMigration.ps1 -DownloadUrl 'https://example.com/Migrate-Entra.exe' -ProvisioningPackageName '*Entra Migration*'
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+Before it starts, it cleans up after any earlier failed attempt, which is what makes re-runs work:
 
-**Purpose:** Step 4. Rebuilds the ForensiTAzureID.xml file directly from Microsoft Graph. ForensiT uses this file to find each user's Entra object ID, and an out-of-date file is a common cause of failed migrations.
+- Deletes ForensiT's "already migrated" flag. Otherwise a re-run sits waiting for someone to press a key.
+- Deletes the half-extracted folder from the failed run.
+- Removes the migration provisioning package if it was already applied.
 
-**How it works:**
-1. Installs and loads the Graph modules if needed, and connects with User.Read.All and Organization.Read.All.
-2. Gets the tenant ID, name, and verified domains for the file's header.
-3. Pulls every user with a UPN.
-4. Writes the XML in ForensiT's format, escaping special characters.
-5. Backs up any existing XML with a timestamp before replacing it.
-
-**Inputs:** `-OutputPath`.
-
-**Outputs:** ForensiTAzureID.xml and a backup of the previous file.
-
-**Requirements:** Modules: Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement. Graph permissions: User.Read.All, Organization.Read.All.
-
-**Changes anything?** READ-ONLY in the tenant. Writes local files.
-
-</details>
+It checks the downloaded file's size before running it, so a failed download doesn't get executed. If your RMM tool can't pass parameters, set the defaults at the top of the script. With no download URL it exits with an error instead of guessing.
 
 ---
 
-## Set-ProfileFolderNamesToUsername
-
-**LOCAL FILES (`-WhatIf`)** · [View script](Set-ProfileFolderNamesToUsername.ps1)
-
-**Step 5 (optional).** Makes migrated profile folders use the username (jsmith) instead of the display name (John Smith).
-
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Step 5 (optional). Changes each user's display name in ForensiTAzureID.xml to their UPN username, so migrated profile folders are named like `jsmith` instead of `John Smith`.
-
-**How it works:**
-1. Checks the XML exists and makes a timestamped backup.
-2. For each user, takes the part of the UPN before the @ and removes characters Windows does not allow in folder names (`\ / : * ? " < > |`).
-3. Replaces the display name with that value, or with `-WhatIf` only shows what would change.
-4. Saves the XML and prints how many users were changed and skipped.
-
-**Inputs:** `-XmlPath`, `-WhatIf`.
-
-**Outputs:** Updated XML and a backup.
-
-**Requirements:** PowerShell 5.1 or later.
-
-**Changes anything?** LOCAL FILES. Edits the XML after backing it up. Supports `-WhatIf`.
-
-</details>
-
----
-
-## Test-MigrationUserLookup
-
-**READ-ONLY** · [View script](Test-MigrationUserLookup.ps1)
-
-**Step 6.** Checks every lookup entry against the Azure ID file and lists any that would fail on migration day. Run it before every wave.
-
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Step 6. Confirms that every Entra UPN in the lookup file exists in ForensiTAzureID.xml. Any that do not will fail on migration day. Run it before every migration wave.
-
-**How it works:** Loads the lookup file and the XML, builds a list of UPNs from the XML (ignoring upper or lower case), checks every lookup entry, and prints either "ALL CSV ENTRIES ARE VALID" or a red list of entries missing from the XML.
-
-**Inputs:** `-CsvPath`, `-XmlPath`.
-
-**Outputs:** Console results.
-
-**Requirements:** PowerShell only.
-
-**Changes anything?** READ-ONLY.
-
-</details>
-
----
-
-## Repair-MigrationUserLookup
-
-**LOCAL FILES** · [View script](Repair-MigrationUserLookup.ps1)
-
-**Step 7.** Works out the correct account for entries that failed Step 6 and writes a fix report for you to review. Assumes the first-initial-plus-last-name username pattern.
-
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Step 7. For lookup entries that failed the check, works out the correct Entra account, keeping both username entries for each user.
-
-**How it works:**
-1. Loads every valid UPN from the XML.
-2. First pass: collects every entry that is already valid, and indexes those by last name and full username.
-3. Second pass: for each invalid entry, uses the valid ones to find the right UPN. For example, if `jsmith` is invalid but `john.smith` is valid, it uses that. It assumes short usernames are first initial plus last name.
-4. Keeps both entries per user instead of dropping one.
-5. Writes a corrected lookup file and a fix report for review.
-
-**Inputs:** `-CsvPath`, `-XmlPath`, `-OutputFolder`.
-
-**Outputs:** Corrected CSV and a fix report CSV.
-
-**Requirements:** PowerShell only. **Assumes the first initial plus last name username pattern.** Check this matches the organization's naming before relying on the results.
-
-**Changes anything?** LOCAL FILES. Writes new files and never overwrites the input.
-
-</details>
-
----
-
-## Update-MigrationUserLookup
-
-**LOCAL FILES** · [View script](Update-MigrationUserLookup.ps1)
-
-**Step 8.** Applies the reviewed fix report to the lookup file.
-
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Step 8. Applies a fix report from step 7 (after you have reviewed or edited it) to the lookup file.
-
-**How it works:** Loads the fix report into a list of old entry to new entry, goes through the lookup file replacing each matching entry, and saves a new corrected file with a count of the fixes applied.
-
-**Inputs:** `-CsvPath`, `-FixReportPath`, `-OutputPath`.
-
-**Outputs:** Corrected lookup CSV.
-
-**Requirements:** PowerShell only.
-
-**Changes anything?** LOCAL FILES. Writes a new file.
-
-</details>
-
----
-
-## Start-EntraProfileMigration
-
-**WRITES (device)** · [View script](Start-EntraProfileMigration.ps1)
-
-**Step 9.** Deployed through RMM. Cleans up leftovers from failed earlier attempts, downloads the migration package, checks it, and runs it. The device migrates and reboots.
-
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Step 9. Deployed through an RMM tool (such as ConnectWise RMM) to download the ForensiT migration package to a device and run it. Cleans up after failed earlier attempts so re-runs work.
-
-**How it works:**
-1. Forces TLS 1.2 and sets up logging.
-2. Pre-flight cleanup:
-   - Deletes ForensiT's "already migrated" flag file, which otherwise makes a re-run stop and wait for keyboard input
-   - Deletes the extraction folder left behind by a failed run
-   - Removes a previously applied migration provisioning package
-3. Downloads the package from the given URL to ProgramData and checks the file size.
-4. Runs the package and waits for it to finish. ForensiT then migrates the profile and reboots the device.
-
-**Inputs:** `-DownloadUrl` (required), `-PackageName`, `-ProvisioningPackageName`, `-MinimumSizeBytes`, `-LogPath`. If your RMM tool cannot pass parameters, set the defaults at the top of the script.
-
-**Outputs:** Log file in `C:\ProgramData`.
-
-**Requirements:** Runs as SYSTEM through RMM. Windows PowerShell 5.1. A ForensiT User Profile Wizard Corporate license and a configured migration package.
-
-**Changes anything?** WRITES on the device. Runs the profile migration and reboots.
-
-</details>
-
----
-
-[Back to the toolkit](../../README.md)
+[Back to Migration](../README.md)

@@ -1,74 +1,38 @@
 # Intune: On-Device
 
-Scripts deployed to Windows devices through Intune (platform scripts or remediations) or an RMM tool. They run as SYSTEM.
-
-| Script | What it does | Changes anything? |
-|---|---|---|
-| [Repair-DefenderCompliance](#repair-defendercompliance) | Fixes the common causes of Intune "Antivirus required" failures: restarts Defender, turns on real-time protection, updates signatures, removes policies that disable it, and triggers a compliance re-check. | WRITES (device) |
-| [Enable-WindowsLocationServices](#enable-windowslocationservices) | Turns on Location Services on Autopilot devices where it was left off. | WRITES (device) |
-
----
+These run on the device itself, as SYSTEM, pushed through Intune (platform script or remediation) or an RMM tool. Both write a log under `C:\ProgramData`.
 
 ## Repair-DefenderCompliance
 
-**WRITES (device)** · [View script](Repair-DefenderCompliance.ps1)
+[Repair-DefenderCompliance.ps1](Repair-DefenderCompliance.ps1)
 
-Fixes the common causes of Intune "Antivirus required" failures: restarts Defender, turns on real-time protection, updates signatures, removes policies that disable it, and triggers a compliance re-check.
+For devices stuck on the Intune "Antivirus required" compliance failure when Defender is the antivirus. It works through the usual causes in order:
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+1. Makes sure the Defender service is running and set to automatic
+2. Turns real-time protection back on
+3. Updates signatures (falls back to MpCmdRun if the cmdlet fails)
+4. Removes Group Policy registry values that disable Defender
+5. Gets Windows Security Center to register Defender again
+6. Restarts the Intune Management Extension and kicks off an MDM sync so compliance gets rechecked quickly
 
-**Purpose:** Runs on a device to fix the common causes of the Intune "Antivirus required" compliance failure when Microsoft Defender is the antivirus.
+It logs a before and after snapshot (service state, real-time protection, signature age, tamper protection), so you can see what actually changed. A reboot afterwards helps.
 
-**How it works:**
-1. Logs a "before" snapshot: Defender service state, running mode, real-time protection, signature age and version, and tamper protection.
-2. Makes sure the Defender service (WinDefend) is running and set to automatic.
-3. Turns real-time protection on.
-4. Forces a signature update, falling back to MpCmdRun if the cmdlet fails.
-5. Removes Group Policy registry values that disable Defender, if present.
-6. Makes Windows Security Center register Defender again.
-7. Restarts the Intune Management Extension and starts the MDM sync task so Intune rechecks compliance quickly.
-8. Logs an "after" snapshot.
+If tamper protection is on, some of these changes get blocked. That's expected.
 
-**Inputs:** None.
-
-**Outputs:** Log file in `C:\ProgramData`.
-
-**Requirements:** Runs as SYSTEM (Intune remediation or RMM). Windows PowerShell 5.1. A reboot afterwards is recommended.
-
-**Changes anything?** WRITES on the device: services, Defender settings, and policy registry keys. If tamper protection is on, some changes are blocked, which is expected. **It removes policy keys that disable Defender, so do not run it where a third-party antivirus or an intentional GPO is meant to control Defender.**
-
-</details>
-
----
+> Step 4 removes policy keys that turn Defender off. **Don't run this where a third-party antivirus is supposed to be in charge**, or where a GPO is disabling Defender on purpose.
 
 ## Enable-WindowsLocationServices
 
-**WRITES (device)** · [View script](Enable-WindowsLocationServices.ps1)
+[Enable-WindowsLocationServices.ps1](Enable-WindowsLocationServices.ps1)
 
-Turns on Location Services on Autopilot devices where it was left off. Uses Windows' built-in admin tool, because direct registry edits get overwritten within seconds.
+If your Autopilot profile hides the privacy settings page during setup, devices come out with Location Services off. Users then see "Location has been turned off by an admin" with no way to turn it back on. This flips the master switch on.
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+The obvious fix, writing the registry values directly, doesn't work. Windows puts them back within seconds (I confirmed it with Process Monitor). This calls `SystemSettingsAdminFlows.exe SetCamSystemGlobal location 1` instead, the same built-in tool the Settings app uses when an admin flips the switch.
 
-**Purpose:** Turns on the Windows Location Services master switch on devices built by Autopilot with the privacy settings page hidden. Those devices start with location off, and users see "Location has been turned off by an admin" with no way to fix it.
+It checks first and exits right away if location is already on. After the change it waits 5 seconds and checks again, then exits 0 if it worked and 1 if it didn't. Per-app location permissions are left to the user.
 
-**How it works:**
-1. Reads the current state. If location is already on, it exits successfully.
-2. Runs `SystemSettingsAdminFlows.exe SetCamSystemGlobal location 1`, the same built-in tool the Settings app uses when an admin flips the switch. Writing the registry directly does not work, because Windows overwrites those values within seconds (confirmed with Process Monitor).
-3. Waits 5 seconds, checks again, and exits 0 for success or 1 for failure.
-4. Leaves per-app location permissions to the user.
-
-**Inputs:** None.
-
-**Outputs:** Log file in `C:\ProgramData`. Exit code 0 or 1.
-
-**Requirements:** Intune platform script, run as SYSTEM, 64-bit PowerShell.
-
-**Changes anything?** WRITES on the device. Turns on Location Services.
-
-</details>
+Deploy it as a platform script running as SYSTEM in 64-bit PowerShell.
 
 ---
 
-[Back to the toolkit](../../README.md)
+[Back to Intune](../README.md)

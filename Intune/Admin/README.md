@@ -1,291 +1,123 @@
 # Intune: Admin
 
-Reports and bulk actions run from an admin workstation through Microsoft Graph.
+Run these from your own machine. They all talk to Intune through Microsoft Graph, and a few use the `/beta` endpoint because that's the only place some of the data lives.
 
-| Script | What it does | Changes anything? |
-|---|---|---|
-| [Export-EntraIntuneDeviceInventory](#export-entraintunedeviceinventory) | Combines Entra ID and Intune device records into one inventory with join type, owner, compliance, and last activity. | READ-ONLY |
-| [Export-IntuneDeviceCategories](#export-intunedevicecategories) | Exports every Intune device with its category to Excel and prints a count per category. | READ-ONLY |
-| [Get-NonCompliantWindowsDevices](#get-noncompliantwindowsdevices) | Lists every Windows device that is not compliant and the exact policy setting failing on each one, including a Secure Boot summary. | READ-ONLY |
-| [Get-DevicePrimaryUser](#get-deviceprimaryuser) | Shows every user linked to a device in both Intune and Entra ID side by side, to troubleshoot "Enrolled user exists" compliance failures. | READ-ONLY |
-| [Set-IntunePrimaryUserAndCategory](#set-intuneprimaryuserandcategory) | Bulk sets each device's primary user and device category from a spreadsheet. | WRITES (`-DryRun`) |
-| [Remove-DevicesFromIntuneAndEntra](#remove-devicesfromintuneandentra) | Deletes retired devices from both Intune and Entra ID, confirming each one. | WRITES, deletes (`-WhatIf`) |
-| [Export-MacOSUpdateProfiles](#export-macosupdateprofiles) | Exports a Settings Catalog profile and a custom macOS update profile to JSON, decoding the custom profile's payload, so conflicting settings can be compared. | READ-ONLY |
-| [Export-CompliancePolicies](#export-compliancepolicies) | Backs up every device compliance policy (all platforms) with its actions for noncompliance and its assignments by group name. | READ-ONLY |
-| [Import-CompliancePolicies](#import-compliancepolicies) | Bulk-imports compliance policies from JSON into the same or a different tenant, optionally rebuilding assignments by group name, never overwriting. | WRITES (dry run unless `-Apply`) |
-
----
+| Script | What it's for |
+|---|---|
+| [Export-EntraIntuneDeviceInventory](Export-EntraIntuneDeviceInventory.ps1) | One device list combining Entra ID and Intune |
+| [Export-IntuneDeviceCategories](Export-IntuneDeviceCategories.ps1) | Every device and its category, in Excel |
+| [Get-NonCompliantWindowsDevices](Get-NonCompliantWindowsDevices.ps1) | Which setting is failing on which device |
+| [Get-DevicePrimaryUser](Get-DevicePrimaryUser.ps1) | Untangle "Enrolled user exists" compliance failures |
+| [Set-IntunePrimaryUserAndCategory](Set-IntunePrimaryUserAndCategory.ps1) | Bulk set primary user and category from a spreadsheet |
+| [Remove-DevicesFromIntuneAndEntra](Remove-DevicesFromIntuneAndEntra.ps1) | Delete retired devices from both places |
+| [Export-MacOSUpdateProfiles](Export-MacOSUpdateProfiles.ps1) | Compare two macOS update profiles for conflicts |
+| [Export-CompliancePolicies](Export-CompliancePolicies.ps1) | Back up every compliance policy to JSON |
+| [Import-CompliancePolicies](Import-CompliancePolicies.ps1) | Import compliance policies into the same or another tenant |
 
 ## Export-EntraIntuneDeviceInventory
 
-**READ-ONLY** · [View script](Export-EntraIntuneDeviceInventory.ps1)
+Entra ID and Intune each have their own idea of what devices exist. This pulls both, matches them on the Entra device ID, and gives you one CSV with join type (Entra joined, hybrid, registered), owner, OS, compliance and last activity for each device.
 
-Combines Entra ID and Intune device records into one inventory with join type, owner, compliance, and last activity.
+```powershell
+.\Export-EntraIntuneDeviceInventory.ps1 -OutputPath "C:\Temp\Devices.csv"
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Builds one complete device list by combining Entra ID device records with Intune managed device records. Mainly used to plan a move from on-prem AD to cloud-only Entra ID.
-
-**How it works:**
-1. Checks for or creates a Graph connection.
-2. Pulls every Entra ID device and every Intune managed device, with paging.
-3. Matches them on the Entra device ID.
-4. For each device, works out the join type (Entra joined, hybrid joined, registered), management type, OS, owner, compliance state, and last activity.
-5. Adds devices found only in Intune (rare, usually personal phones).
-6. Exports a CSV and prints summary counts.
-
-**Inputs:** `-OutputPath`.
-
-**Outputs:** CSV inventory and console statistics.
-
-**Requirements:** Modules: Microsoft.Graph.Authentication, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.DeviceManagement. Graph permissions: Device.Read.All, DeviceManagementManagedDevices.Read.All.
-
-**Changes anything?** READ-ONLY.
-
-</details>
-
----
+I mostly use it at the start of an AD-to-cloud migration to see where every device stands. Devices that only exist in Intune (usually personal phones) are included too. Read-only.
 
 ## Export-IntuneDeviceCategories
 
-**READ-ONLY** · [View script](Export-IntuneDeviceCategories.ps1)
+Quick one. Every Intune device with its category, exported to Excel, plus a count per category on screen.
 
-Exports every Intune device with its category to Excel and prints a count per category.
+```powershell
+Connect-MgGraph -Scopes "DeviceManagementManagedDevices.Read.All"
+.\Export-IntuneDeviceCategories.ps1
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** A quick export of every Intune managed device with its device category, plus a count per category. Also feeds Update-WorkbookDeviceCategories.
-
-**How it works:** Pulls all Intune managed devices (name, primary user, category, OS), exports them to Excel with filters and a frozen header row, and prints a breakdown by category.
-
-**Inputs:** `-OutputPath` (default: IntuneDeviceCategories.xlsx in your Downloads folder).
-
-**Outputs:** Excel workbook and a console breakdown.
-
-**Requirements:** An existing Graph session (`Connect-MgGraph -Scopes DeviceManagementManagedDevices.Read.All`). Modules: Microsoft.Graph.DeviceManagement, ImportExcel.
-
-**Changes anything?** READ-ONLY in the tenant. Writes a local Excel file.
-
-</details>
-
----
+Needs ImportExcel. Its output also feeds Update-WorkbookDeviceCategories in the [Migration](../../Migration/) folder.
 
 ## Get-NonCompliantWindowsDevices
 
-**READ-ONLY** · [View script](Get-NonCompliantWindowsDevices.ps1)
+The Intune portal tells you a device is noncompliant. It's a lot less helpful about *why*, especially across a few hundred devices. This lists every Windows device that isn't compliant and every failing setting on it, one row per device, policy and setting.
 
-Lists every Windows device that is not compliant and the exact policy setting failing on each one, including a Secure Boot summary.
+```powershell
+.\Get-NonCompliantWindowsDevices.ps1 -OutputFolder C:\Temp
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+It treats anything that isn't "compliant" as a problem: noncompliant, error, in grace period, unknown. It also pulls every Windows device without a server-side filter, because server-side filtering can miss some. The summary at the end counts failures by setting, with its own section for Secure Boot.
 
-**Purpose:** Finds every Windows device that is not fully compliant in Intune and shows exactly which setting, in which policy, is failing.
-
-**How it works:**
-1. Pulls every Windows managed device with no server-side filter, because filtering on the server can miss devices.
-2. Treats anything that is not "compliant" as in scope: noncompliant, error, in grace period, unknown, and so on.
-3. For each device, pulls every compliance policy state and every setting state inside it, so nothing is hidden.
-4. If a policy reports a state but returns no settings, logs the policy itself.
-5. Prints a compliance state breakdown, a count of failures by setting, and a dedicated Secure Boot section.
-6. Exports one CSV row per device, policy, and setting.
-
-**Inputs:** `-OutputFolder`.
-
-**Outputs:** Detailed CSV and console summaries.
-
-**Requirements:** Module: Microsoft.Graph.Authentication (installs automatically). Graph permissions: DeviceManagementManagedDevices.Read.All, DeviceManagementConfiguration.Read.All. Uses the Graph `/beta` endpoint.
-
-**Changes anything?** READ-ONLY.
-
-</details>
-
----
+Read-only.
 
 ## Get-DevicePrimaryUser
 
-**READ-ONLY** · [View script](Get-DevicePrimaryUser.ps1)
+For devices failing the "Enrolled user exists" compliance check. That usually happens because Intune and Entra ID disagree about who the device belongs to. This puts all four user links side by side so the mismatch is obvious: Intune enrolled user, Intune primary user, Entra registered owner and Entra registered users.
 
-Shows every user linked to a device in both Intune and Entra ID side by side, to troubleshoot "Enrolled user exists" compliance failures.
+```powershell
+.\Get-DevicePrimaryUser.ps1 -DeviceNames "LAPTOP-001","DESKTOP-002"
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Troubleshoots devices failing the Intune "Enrolled user exists" compliance check by showing every user link the device has, side by side.
-
-**How it works:** For each device name, pulls four things from Graph:
-1. The Intune managed device record (enrolled user, UPN, IDs)
-2. The Intune primary user
-3. The matching Entra ID device object
-4. The Entra ID registered owner and registered users
-
-Everything goes into one CSV row per device, so mismatches between the four are easy to spot.
-
-**Inputs:** `-DeviceNames` (required), `-OutputFolder`.
-
-**Outputs:** CSV and console output per device.
-
-**Requirements:** Module: Microsoft.Graph.Authentication. Graph permissions: DeviceManagementManagedDevices.Read.All, Device.Read.All, User.Read.All. Uses the Graph `/beta` endpoint.
-
-**Changes anything?** READ-ONLY.
-
-</details>
-
----
+Read-only. Saves a CSV with one row per device.
 
 ## Set-IntunePrimaryUserAndCategory
 
-**WRITES (`-DryRun`)** · [View script](Set-IntunePrimaryUserAndCategory.ps1)
+After a migration, devices tend to show up in Intune with the wrong primary user or none at all. This fixes them in bulk from an Excel sheet with three columns: `Device name`, `Category` and `Primary user UPN`.
 
-Bulk sets each device's primary user and device category from a spreadsheet. Built for fixing devices after a migration.
+```powershell
+.\Set-IntunePrimaryUserAndCategory.ps1 -ExcelPath "C:\Temp\DeviceMappings.xlsx" -DryRun
+.\Set-IntunePrimaryUserAndCategory.ps1 -ExcelPath "C:\Temp\DeviceMappings.xlsx"
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+It clears any existing primary user and then assigns the new one. Device names with apostrophes are handled. At the end you get counts for each failure type (device, user or category not found) and a CSV of anything that failed, so you can fix the sheet and re-run just those.
 
-**Purpose:** Bulk sets each Intune device's primary user and device category from an Excel mapping sheet. Used after a migration, when devices arrive in Intune with a wrong or missing primary user.
-
-**How it works:**
-1. Imports the Excel file and checks for the required columns: "Device name", "Category", "Primary user UPN".
-2. Connects to Graph and loads all device categories into a lookup that ignores upper or lower case.
-3. For each row: finds the device in Intune (handling apostrophes in names), the user, and the category.
-4. Sets the primary user by first removing any existing one, then assigning the new one.
-5. Sets the device category.
-6. Counts results: Successful, Failed, Device not found, User not found, Category not found.
-7. Writes a log file and a CSV of failed devices.
-
-**Inputs:** `-ExcelPath` (required), `-DryRun`, `-LogPath`.
-
-**Outputs:** Log file, failed-devices CSV, and a console summary.
-
-**Requirements:** Modules: Microsoft.Graph.Authentication, Microsoft.Graph.DeviceManagement, ImportExcel. Graph permissions: DeviceManagementManagedDevices.ReadWrite.All, User.Read.All. Role: Intune Administrator. Uses the Graph `/beta` endpoint.
-
-**Changes anything?** WRITES. Changes primary user and category. `-DryRun` previews.
-
-</details>
-
----
+Needs ImportExcel and the Intune Administrator role.
 
 ## Remove-DevicesFromIntuneAndEntra
 
-**WRITES, deletes (`-WhatIf`)** · [View script](Remove-DevicesFromIntuneAndEntra.ps1)
+Deletes devices from Intune and Entra ID in one pass, for retired hardware or devices being re-enrolled during a migration.
 
-Deletes retired devices from both Intune and Entra ID, confirming each one. **Deleting from Entra ID also deletes the device's BitLocker keys, so back them up first.**
+```powershell
+.\Remove-DevicesFromIntuneAndEntra.ps1 -WhatIf
+.\Remove-DevicesFromIntuneAndEntra.ps1 -DeviceNames "DESKTOP-ABC123","LAPTOP-XYZ789"
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+Leave off `-DeviceNames` and it lets you type them in, one per line (type DONE to finish). It shows you the list, asks before deleting, and stops if two devices share a name.
 
-**Purpose:** Deletes devices from both Intune and Entra ID in bulk. Used when retiring devices, or when re-enrolling them during a hybrid-to-cloud migration.
+> **Back up BitLocker keys first.** Deleting a device from Entra ID also deletes the recovery keys stored on it, and you can't undo it.
 
-**How it works:**
-1. Checks for the required Graph modules and connects with the needed permissions.
-2. Takes device names from `-DeviceNames`, or prompts you to type them one per line (type DONE to finish).
-3. Shows the list and asks for confirmation.
-4. For each device:
-   - Finds it in Intune and deletes it, stopping to ask if more than one device has the same name
-   - Finds it in Entra ID and deletes it
-   - Escapes apostrophes in device names for the Graph filter
-5. Prints deleted, not found, and failed counts for each service, and logs everything.
-
-**Inputs:** `-DeviceNames` (optional), `-WhatIf`, `-LogPath`.
-
-**Outputs:** Log file and console summary.
-
-**Requirements:** Modules: Microsoft.Graph.DeviceManagement, Microsoft.Graph.Identity.DirectoryManagement. Graph permissions: DeviceManagementManagedDevices.ReadWrite.All, Device.ReadWrite.All. Roles: Intune Administrator plus Cloud Device Administrator.
-
-**Changes anything?** WRITES, deletes. Supports `-WhatIf` and confirms each device. **Deleting a device from Entra ID cannot be undone and also deletes the BitLocker recovery keys stored on it. Back up BitLocker keys first.**
-
-</details>
-
----
+Needs Intune Administrator plus Cloud Device Administrator.
 
 ## Export-MacOSUpdateProfiles
 
-**READ-ONLY** · [View script](Export-MacOSUpdateProfiles.ps1)
+For when a Settings Catalog macOS update policy and a custom profile (often one a compliance vendor pushes) seem to be fighting each other. It exports both to JSON so you can diff them. If the custom profile has a .mobileconfig payload, it decodes it from Base64 so you can actually read the settings.
 
-Exports a Settings Catalog profile and a custom macOS update profile to JSON, decoding the custom profile's payload, so conflicting settings can be compared.
+```powershell
+.\Export-MacOSUpdateProfiles.ps1 -SettingsCatalogName "macOS Automated Updates" -CustomProfileName "macOS Software Update"
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+Part of each name is enough. If the Settings Catalog policy isn't found, it lists the ones that exist. Read-only.
 
-**Purpose:** Exports two macOS software update profiles side by side so you can check them for conflicting settings: a Settings Catalog policy and a custom configuration profile (for example one pushed by a compliance vendor).
+## Export-CompliancePolicies / Import-CompliancePolicies
 
-**How it works:**
-1. Connects to Graph.
-2. Finds the Settings Catalog policy by name and exports it, with all its settings, to JSON. If it is not found, lists the available policies.
-3. Finds the custom profile by name and exports it. If it contains a .mobileconfig payload, decodes it from Base64 so the actual settings are readable.
-4. Prints a summary and disconnects.
+A backup and restore pair for compliance policies, all platforms. Use them to restore a policy someone deleted, or to build a new tenant's compliance baseline in one go instead of clicking through the portal.
 
-**Inputs:** `-SettingsCatalogName` and `-CustomProfileName` (required; part of the name is enough), `-OutputPath`.
+```powershell
+Connect-MgGraph -Scopes "DeviceManagementConfiguration.ReadWrite.All","Group.Read.All"
 
-**Outputs:** Two JSON files.
+.\Export-CompliancePolicies.ps1 -OutputPath C:\Backups\Compliance
 
-**Requirements:** Module: Microsoft.Graph.Authentication. Graph permission: DeviceManagementConfiguration.Read.All. Uses the Graph `/beta` endpoint.
+.\Import-CompliancePolicies.ps1 -Path C:\Backups\Compliance            # dry run
+.\Import-CompliancePolicies.ps1 -Path C:\Backups\Compliance -Apply -Assign
+```
 
-**Changes anything?** READ-ONLY.
+The export writes one JSON file per policy, with the read-only fields already removed, and an `assignments.csv` that records group *names*. Group IDs are different in every tenant, so the import looks groups up by name when you use `-Assign`.
 
-</details>
+The import is a dry run unless you add `-Apply`, and it never overwrites a policy that already exists. A few things it deals with for you:
 
----
+- Graph won't create a compliance policy without an action for noncompliance, so if a file has none it adds the default (mark noncompliant immediately).
+- Notification templates that don't exist in the new tenant are dropped from the action. The action itself stays.
+- Groups that don't exist in the new tenant are reported, not created.
 
-## Export-CompliancePolicies
-
-**READ-ONLY** · [View script](Export-CompliancePolicies.ps1)
-
-Backs up every device compliance policy (all platforms) with its actions for noncompliance and its assignments by group name.
-
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** A restorable backup of every Intune compliance policy (Windows, macOS, iOS/iPadOS, Android, Linux). The output is the input for Import-CompliancePolicies.
-
-**How it works:**
-1. Checks for a Graph connection.
-2. Pulls every compliance policy with its scheduled actions (the actions for noncompliance, which Graph requires when a policy is created) and its assignments.
-3. Removes read-only fields (id, dates, version, scope tags, `@odata.context`) and null values, and writes one import-ready JSON file per policy.
-4. Looks up the name of every assigned group and writes `assignments.csv`, so assignments can be rebuilt in a tenant where the group IDs are different.
-
-**Inputs:** `-OutputPath` (default: `Compliance-Backup-<date-time>` in the current folder).
-
-**Outputs:** A backup folder with `Policies\` and `assignments.csv`.
-
-**Requirements:** Module: Microsoft.Graph.Authentication. Graph permissions: DeviceManagementConfiguration.Read.All, Group.Read.All. Uses the Graph `/beta` endpoint.
-
-**Changes anything?** READ-ONLY.
-
-</details>
+Custom compliance scripts aren't carried over. They're tenant-specific.
 
 ---
 
-## Import-CompliancePolicies
-
-**WRITES (dry run unless `-Apply`)** · [View script](Import-CompliancePolicies.ps1)
-
-Bulk-imports compliance policies from JSON into the same or a different tenant, optionally rebuilding assignments by group name, never overwriting.
-
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
-
-**Purpose:** Restore compliance policies from a backup, or build a new tenant's compliance baseline in one run.
-
-**How it works:**
-1. Without `-Apply` it is a dry run that reports what would be created. With `-Apply` you type IMPORT to confirm (or pass `-Force`).
-2. Skips any policy whose name already exists.
-3. Adds the Intune default action (mark noncompliant immediately) to any file that has none, because Graph refuses a compliance policy without one.
-4. Removes notification message templates that do not exist in the target tenant, keeping the action itself.
-5. Creates each policy unassigned, or with `-Assign`, assigns it to the same groups (matched by name from `assignments.csv`), All Users or All Devices it had in the source tenant. Missing groups are reported, not created.
-6. Writes a results CSV.
-
-**Inputs:** `-Path` (backup folder or a folder of compliance policy JSON files), `-Apply`, `-Assign`, `-Force`.
-
-**Outputs:** Console results by policy and `import-results-<date-time>.csv` in the import folder.
-
-**Requirements:** Module: Microsoft.Graph.Authentication. Graph permissions: DeviceManagementConfiguration.ReadWrite.All, Group.Read.All. Role: Intune Administrator. Uses the Graph `/beta` endpoint.
-
-**Changes anything?** WRITES: creates compliance policies and, with `-Assign`, their assignments. Never modifies or deletes existing policies.
-
-</details>
-
----
-
-[Back to the toolkit](../../README.md)
+[Back to Intune](../README.md)

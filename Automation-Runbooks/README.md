@@ -1,49 +1,28 @@
 # Automation Runbooks
 
-Scheduled Azure Automation jobs that sign in with a managed identity, so no passwords or secrets are stored.
-
-| Script | What it does | Changes anything? |
-|---|---|---|
-| [Sync-CompanyDirectoryContacts](#sync-companydirectorycontacts) | Scheduled Azure Automation job that keeps a "Company Directory" contacts folder in every mailbox matched to the current staff list. | WRITES, contacts only (dry run by default) |
-
----
+Scheduled jobs for Azure Automation. They sign in with the Automation account's managed identity, so there's no password or client secret sitting anywhere.
 
 ## Sync-CompanyDirectoryContacts
 
-**WRITES, contacts only (dry run by default)** · [View script](Sync-CompanyDirectoryContacts.ps1)
+[Sync-CompanyDirectoryContacts.ps1](Sync-CompanyDirectoryContacts.ps1)
 
-Scheduled Azure Automation job that keeps a "Company Directory" contacts folder in every mailbox matched to the current staff list. Uses a managed identity, only touches contacts it created, and has safety limits so a mistake cannot wipe anyone's contacts.
+Keeps a "Company Directory" contacts folder in everyone's mailbox in sync with the staff list in Entra ID. People get current coworker contacts on their phone and in Outlook without anyone maintaining a list by hand.
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+On each run it adds new staff, updates anyone whose details changed, and removes people who left. It only touches contacts it created itself. Each one is tagged with a hidden property holding the person's Entra object ID, so contacts a user added on their own never get changed or deleted.
 
-**Purpose:** Keeps a "Company Directory" contacts folder in every staff mailbox matched to the current staff list in Entra ID, so everyone has up-to-date coworker contacts on their phone and in Outlook. Runs on a schedule in Azure Automation.
+**The permissions are the important part.** Don't grant Contacts.ReadWrite to the managed identity in Entra. That gives it every mailbox in the tenant. Grant it through **Exchange RBAC for Applications** with a management scope instead, so it can only reach the mailboxes you pick. The runbook doesn't decide who's in scope. It tests each mailbox and Exchange answers (200 = in scope, 403 = out of scope, 404 = no mailbox).
 
-**How it works:**
-1. Signs in with the Automation account's managed identity, so no passwords or secrets are stored.
-2. Pulls enabled member accounts from Entra ID.
-3. Tests each account's mailbox to see whether the runbook is allowed to write to it. Access is controlled by Exchange RBAC for Applications, not by the script: 200 means in scope, 403 means out of scope, 404 means no mailbox. Any other error stops the run.
-4. Picks the target mailboxes: every in-scope mailbox, or only the mailboxes in `-PilotMailboxes` if set.
-5. For each mailbox: finds or creates the "Company Directory" folder, then adds, updates, or removes contacts so the folder matches the staff list.
-6. Only touches contacts it created. Each one is marked with a hidden property holding the person's Entra object ID, so contacts a user added by hand are never changed.
-7. Compares fields before updating, and ignores internal X500 address formats, so contacts are not rewritten on every run.
-8. Retries throttling and temporary Graph errors (429, 502, 503, 504).
+It's built so a mistake can't wipe out everyone's contacts:
 
-**Safety features:**
-- `-DryRun` is on by default: it logs planned changes and writes nothing
-- Stops if fewer than `-MinDirectorySize` staff are found, so a permissions problem cannot wipe everyone's directory
-- Skips removals in a mailbox if more than `-MaxRemovalsPerMailbox` contacts would be removed
-- Stops cleanly after `-MaxRuntimeMinutes`, and the next run continues
+- `-DryRun` is on by default. It logs what it would do and writes nothing. Set it to `$false` once you've read the output.
+- It stops if it finds fewer than 15 staff (`-MinDirectorySize`), which usually means a permissions problem rather than a mass layoff.
+- It won't remove more than 5 contacts from any one mailbox in a single run (`-MaxRemovalsPerMailbox`).
+- Use `-PilotMailboxes` to try it on a few mailboxes first.
+- It stops cleanly after 14 minutes (`-MaxRuntimeMinutes`) and the next run carries on.
 
-**Inputs:** `-DryRun`, `-PilotMailboxes`, `-MinDirectorySize` (default 15), `-MaxRemovalsPerMailbox` (default 5), `-MaxRuntimeMinutes` (default 14).
+It compares fields before updating, so contacts aren't rewritten on every run, and it retries throttling and temporary Graph errors (429, 502, 503, 504).
 
-**Outputs:** Runbook job output and logs.
-
-**Requirements:** Azure Automation, PowerShell 7.2 runtime, no extra modules. Managed identity with User.Read.All (Entra app role) and Contacts.ReadWrite granted **only** through Exchange RBAC for Applications with a management scope. Granting Contacts.ReadWrite in Entra instead would give the runbook access to every mailbox in the tenant.
-
-**Changes anything?** WRITES to mailboxes (contacts only). Dry run by default.
-
-</details>
+**Needs:** Azure Automation with the PowerShell 7.2 runtime (no extra modules). The managed identity needs User.Read.All as an Entra app role, plus Contacts.ReadWrite through Exchange RBAC for Applications as described above.
 
 ---
 

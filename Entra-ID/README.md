@@ -1,146 +1,75 @@
 # Entra ID
 
-User, group, and license administration through Microsoft Graph.
+User, group and license scripts I use for Entra ID. All of them go through Microsoft Graph, so connect with `Connect-MgGraph` first and give it only the scopes the script asks for.
 
-| Script | What it does | Changes anything? |
-|---|---|---|
-| [Add-UsersToEntraGroup](#add-userstoentragroup) | Adds a list of users to any Entra ID group from a typed list, .txt, or .csv. | WRITES (`-WhatIf`) |
-| [Resolve-UserUPNsFromNames](#resolve-userupnsfromnames) | Turns a list of people's names, such as "SMITH, JOHN A" from an HR export, into Entra ID sign-in addresses using four matching methods. | READ-ONLY |
-| [Add-LicenseToUsers](#add-licensetousers) | Assigns a license to everyone in a spreadsheet. | WRITES (`-DryRun`) |
-| [Get-PasswordExpiryReport](#get-passwordexpiryreport) | Before you turn on password expiration, shows who will be forced to change their password immediately and who will be hit within two weeks, split into cloud-only and synced accounts. | READ-ONLY |
-
----
+| Script | What it's for |
+|---|---|
+| [Add-UsersToEntraGroup](Add-UsersToEntraGroup.ps1) | Bulk add users to a group from a list |
+| [Resolve-UserUPNsFromNames](Resolve-UserUPNsFromNames.ps1) | Turn a list of names into UPNs |
+| [Add-LicenseToUsers](Add-LicenseToUsers.ps1) | Assign a license to everyone in a spreadsheet |
+| [Get-PasswordExpiryReport](Get-PasswordExpiryReport.ps1) | See who gets locked out before you turn on password expiration |
 
 ## Add-UsersToEntraGroup
 
-**WRITES (`-WhatIf`)** · [View script](Add-UsersToEntraGroup.ps1)
+The portal is fine for adding three people to a group. It's painful for 200. This takes a list of UPNs (typed in, a .txt file, or a .csv) and adds them, skipping anyone who's already a member.
 
-Adds a list of users to any Entra ID group from a typed list, .txt, or .csv. Skips existing members, blocks groups synced from AD, and logs every result.
+```powershell
+Connect-MgGraph -Scopes "Group.ReadWrite.All","GroupMember.ReadWrite.All","User.Read.All"
+.\Add-UsersToEntraGroup.ps1 -GroupName "App-Users" -UpnFile "C:\lists\app-users.txt" -WhatIf
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+Run it with `-WhatIf` first. It also prints the tenant and account you're connected to and asks before doing anything. If you work in more than one tenant, read that line.
 
-**Purpose:** Bulk adds users to any Entra ID security group or Microsoft 365 group from a list of sign-in addresses (UPNs).
+A few things it handles so you don't have to:
+- CSV files can use a column named UPN, UserPrincipalName, Email or EmailAddress
+- If two groups have the same name it stops and lists them instead of guessing (use `-GroupId` then)
+- It won't touch groups synced from on-prem AD, since those have to be changed in AD anyway
 
-**How it works:**
-1. Loads the user list from one of three sources: a list typed on the command line (`-Upn`), a `.txt` file with one UPN per line, or a `.csv` file. For CSV files it finds the right column automatically (UPN, UserPrincipalName, Email, or EmailAddress).
-2. Cleans the list: trims spaces, drops blank lines and lines starting with `#`, and removes duplicates regardless of upper or lower case.
-3. Confirms a Microsoft Graph session exists and prints the signed-in account, tenant ID, and permissions so you can confirm you are in the right tenant. Asks for confirmation unless `-SkipConfirm` is used.
-4. Finds the group by display name (`-GroupName`) or object ID (`-GroupId`). If more than one group has the same name, it stops and lists them.
-5. Stops if the group is synced from on-prem AD, because those groups can only be changed in AD.
-6. Loads the group's current members once, so existing members are skipped without extra Graph calls.
-7. For each user: looks them up, skips them if they are already a member, otherwise adds them.
-8. Prints a color-coded summary and writes a timestamped CSV log.
-
-**Inputs:** `-GroupName` or `-GroupId`, plus `-UpnFile` or `-Upn`. Optional: `-OutputFolder`, `-SkipConfirm`, `-WhatIf`.
-
-**Outputs:** Color-coded console results (Added, Already member, Not found, Error) and a CSV log. No CSV is written in `-WhatIf` mode.
-
-**Requirements:** PowerShell 5.1 or 7. Modules: Microsoft.Graph.Authentication, Microsoft.Graph.Groups, Microsoft.Graph.Users. Graph permissions: Group.ReadWrite.All, GroupMember.ReadWrite.All, User.Read.All. Role: Groups Administrator or User Administrator.
-
-**Changes anything?** WRITES. Adds group members. Supports `-WhatIf`.
-
-</details>
-
----
+Writes a CSV log of every result to your Downloads folder.
 
 ## Resolve-UserUPNsFromNames
 
-**READ-ONLY** · [View script](Resolve-UserUPNsFromNames.ps1)
+For when someone sends you a list of names instead of email addresses. HR and line-of-business app exports are the usual culprits, with names like "SMITH MR, JOHN A".
 
-Turns a list of people's names, such as "SMITH, JOHN A" from an HR export, into Entra ID sign-in addresses using four matching methods. Flags names with more than one match.
+```powershell
+Connect-MgGraph -Scopes "User.Read.All"
+.\Resolve-UserUPNsFromNames.ps1 -NameFile "C:\lists\names.txt"
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+It handles "Last, First" and "First Last", strips titles like MR, and tries a few different Graph lookups until one works. Every name comes back as Resolved, Ambiguous or NotFound. At the end it prints the resolved UPNs as a block you can paste straight into Add-UsersToEntraGroup.
 
-**Purpose:** Turns a list of people's names, as they appear in an HR or app export (for example "SMITH MR, JOHN A" or "Jane Doe"), into their Entra ID UPNs. Use it when someone gives you names instead of email addresses, before adding those users to a group or license.
+Check the Ambiguous ones by hand. Two John Smiths is a people problem, not a script problem.
 
-**How it works:**
-1. Reads the list of names.
-2. Parses each name, handling both "Last, First Middle" and "First Last" formats, and removes titles such as "MR".
-3. Tries up to four lookups against Microsoft Graph, stopping at the first one that works:
-   - Display name equals "First Last"
-   - Display name equals "Last, First"
-   - Surname starts with the last name and given name starts with the first name, with suffixes removed
-   - A full-text Graph search (uses the `ConsistencyLevel: eventual` header)
-4. Labels each name Resolved, Ambiguous (more than one match, with all candidates listed), or NotFound.
-5. Prints a color-coded results table, exports a CSV, and prints the resolved UPNs as a block ready to paste into Add-UsersToEntraGroup.
-
-**Inputs:** `-NameFile` (required): a .txt file with one name per line, or a .csv with a Name column. Optional `-OutputFolder`.
-
-**Outputs:** Console table, CSV of results, and a copy-paste UPN list.
-
-**Requirements:** PowerShell 5.1 or 7. Module: Microsoft.Graph.Users. Graph permission: User.Read.All.
-
-**Changes anything?** READ-ONLY.
-
-</details>
-
----
+Read-only.
 
 ## Add-LicenseToUsers
 
-**WRITES (`-DryRun`)** · [View script](Add-LicenseToUsers.ps1)
+Assigns one license to every user in an Excel sheet. I built it for a batch of Exchange Online Plan 1 assignments, so that's the default. Pass a different SKU with `-SkuPartNumber` to use it for anything else.
 
-Assigns a license to everyone in a spreadsheet. Sets usage location first, checks that enough licenses are available, and skips users who already have it.
+```powershell
+.\Add-LicenseToUsers.ps1 -Path "C:\Temp\users.xlsx" -UpnColumnNumber 3 -DryRun
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+You give it the column *number* instead of a header name. The sheet I was working from had two columns with the same header, and reading by position was the simplest way around it.
 
-**Purpose:** Bulk assigns a Microsoft 365 license (for example Exchange Online Plan 1) to users listed in a spreadsheet.
+Before assigning anything it checks that you actually have enough licenses free. It sets usage location to US if it's blank (licensing fails without it; change it with `-UsageLocation`) and skips anyone who already has the license, so it's safe to re-run if it stops halfway.
 
-**How it works:**
-1. Opens the Excel file with the ImportExcel module and reads the chosen email column. It reads without headers so it can handle workbooks that have two columns with the same name.
-2. Builds a clean user list: trimmed, duplicates removed, original order kept.
-3. Connects to Graph and looks up the license's SKU ID from the tenant by name, so no license GUID is hardcoded.
-4. Checks that enough licenses are available before starting.
-5. For each user: finds them, sets usage location if it is blank (Microsoft requires it before licensing), skips them if the license is already assigned, otherwise assigns it.
-6. Writes a text log and a CSV summary. Safe to run again, because users who already have the license are skipped.
-
-**Inputs:** `-Path` and `-UpnColumnNumber` (required). Optional: `-WorksheetName` (default Sheet1), `-SkuPartNumber` (default EXCHANGESTANDARD), `-UsageLocation` (default US), `-LogFolder`, `-DryRun`.
-
-**Outputs:** Text log and CSV results.
-
-**Requirements:** Modules: Microsoft.Graph.Authentication, Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement, ImportExcel (installs automatically if missing). Graph permissions: User.ReadWrite.All, Organization.Read.All. Role: License Administrator or higher.
-
-**Changes anything?** WRITES. Assigns licenses and may set usage location. `-DryRun` previews without changes.
-
-</details>
-
----
+Needs the ImportExcel module. It installs it if it's missing.
 
 ## Get-PasswordExpiryReport
 
-**READ-ONLY** · [View script](Get-PasswordExpiryReport.ps1)
+Run this **before** you switch a tenant from "passwords never expire" to an expiration policy. The moment you flip that setting, anyone whose password is older than the new limit has to change it at their next sign-in. This tells you who that is ahead of time.
 
-Before you turn on password expiration, shows who will be forced to change their password immediately and who will be hit within two weeks, split into cloud-only and synced accounts.
+```powershell
+.\Get-PasswordExpiryReport.ps1                     # 90 day policy, 14 day warning window
+.\Get-PasswordExpiryReport.ps1 -ExpireDays 180
+```
 
-<details>
-<summary><b>Full details: how it works, inputs, requirements</b></summary>
+Each user lands in one of four buckets: **EXPIRED** (affected immediately), **AT-RISK** (affected in the next 14 days), **OK**, or **UNKNOWN** (no password date, check manually). Guests, disabled accounts and unlicensed accounts like shared mailboxes are left out.
 
-**Purpose:** Before switching a tenant from "passwords never expire" to an expiration policy (such as 90 days), shows exactly who will be forced to change their password the moment the policy changes, and who will be hit in the next two weeks.
+The report also marks each account as cloud-only or synced, and that's the part people miss. If Entra Connect is doing password hash sync, the Entra expiration setting only applies to cloud-only accounts. Synced users still follow your on-prem AD password policy.
 
-**How it works:**
-1. Connects to Graph with read-only access.
-2. Pulls all enabled member accounts (no guests, no disabled accounts) with their last password change date, password policies, sync status, and licenses. Unlicensed accounts such as shared mailboxes are filtered out.
-3. Puts each user into a group:
-   - EXPIRED: password last changed 90 or more days ago (will expire the moment the policy changes)
-   - AT-RISK: changed 76 to 89 days ago (will expire within 14 days)
-   - OK: everyone else
-   - UNKNOWN: no timestamp, flagged for manual review
-4. Marks each account as cloud-only or synced from on-prem AD. This matters because while Entra Connect is syncing passwords, the Entra expiration setting only applies to cloud-only accounts. Synced accounts follow the on-prem AD policy.
-5. Exports a CSV sorted worst-first and prints a summary, including how many EXPIRED and AT-RISK accounts are synced versus cloud-only.
-6. Disconnects from Graph.
-
-**Inputs:** `-OutputPath`, `-ExpireDays` (default 90), `-AtRiskWindow` (default 14).
-
-**Outputs:** Timestamped CSV and a console summary.
-
-**Requirements:** Modules: Microsoft.Graph.Authentication, Microsoft.Graph.Users. Graph permission: User.Read.All.
-
-**Changes anything?** READ-ONLY.
-
-</details>
+Read-only. Exports a CSV sorted worst-first.
 
 ---
 
